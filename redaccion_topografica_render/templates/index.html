@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Redacción Topográfica</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; margin:24px; color:#1f2937}
+    h1{font-size:1.4rem; margin-bottom:0.75rem}
+    .card{max-width:900px; margin:auto; border:1px solid #e5e7eb; border-radius:12px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,0.04)}
+    textarea{width:100%; min-height:180px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New", monospace; font-size:14px; border:1px solid #d1d5db; border-radius:8px; padding:12px}
+    button{appearance:none; border:0; background:#111827; color:#fff; padding:10px 16px; border-radius:10px; cursor:pointer}
+    button.secondary{background:#374151}
+    .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+    .col{flex:1}
+    .muted{color:#6b7280; font-size:0.9rem}
+    .list{background:#f9fafb; border-radius:10px; padding:12px; border:1px solid #e5e7eb; margin-top:12px}
+    .ok{color:#065f46}
+    .err{color:#b91c1c}
+    .chip{display:inline-block; background:#eef2ff; color:#3730a3; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #c7d2fe}
+    .footer{margin-top:24px; font-size:12px; color:#6b7280}
+    input[type="text"]{width:100%; padding:8px; border:1px solid #d1d5db; border-radius:8px}
+    input[type="file"]{padding:6px 0}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Redacción Topográfica</h1>
+    <p class="muted">Formato por líneas:
+      <span class="chip">est_i, est_f, NS, grados, minutos, segundos, EW, distancia</span>
+    </p>
+    <p class="muted">Ej.: <code>1, 2, S, 46, 35, 19, E, 20.50</code></p>
+
+    <textarea id="lineas" placeholder="1, 2, S, 46, 35, 19, E, 20.50&#10;2, 3, S, 10, 0, 0, E, 15.00"></textarea>
+
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label class="muted">Título del documento (opcional)</label>
+        <input id="titulo" type="text" placeholder="Redacción de Levantamiento Topográfico" />
+      </div>
+      <div>
+        <button id="btnPreview">Previsualizar</button>
+      </div>
+      <div>
+        <button id="btnDocx" class="secondary">Descargar .docx</button>
+      </div>
+    </div>
+
+    <div id="preview" class="list" style="display:none">
+      <div id="ok" class="ok"></div>
+      <div id="err" class="err" style="margin-top:8px"></div>
+    </div>
+
+    <hr style="margin:20px 0">
+
+    <div class="row">
+      <div class="col">
+        <label class="muted">Subir CSV (con encabezados)</label><br/>
+        <input type="file" id="csvFile" accept=".csv" />
+      </div>
+      <div>
+        <button id="btnCsv">Generar .docx desde CSV</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      Acepta: <b>NS = N/S</b>, <b>EW = E/W/O</b>. Decimales con punto o coma.
+    </div>
+  </div>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const previewBox = $("#preview");
+    const okBox = $("#ok");
+    const errBox = $("#err");
+
+    async function doPreview(){
+      okBox.innerHTML = "";
+      errBox.innerHTML = "";
+      const lineas = $("#lineas").value.trim();
+      if(!lineas){ errBox.textContent = "No ingresaste líneas."; previewBox.style.display="block"; return; }
+      const form = new FormData();
+      form.append("lineas", lineas);
+      const resp = await fetch("/preview", {method:"POST", body:form});
+      const data = await resp.json();
+      if(data.frases?.length){
+        okBox.innerHTML = "<b>Frases generadas:</b><br>" + data.frases.map(f=>`• ${f}`).join("<br>");
+      }
+      if(data.errores?.length){
+        errBox.innerHTML = "<b>Errores:</b><br>" + data.errores.map(e=>`• ${e}`).join("<br>");
+      }
+      previewBox.style.display="block";
+    }
+
+    async function doDocx(){
+      const lineas = $("#lineas").value.trim();
+      if(!lineas){ alert("No ingresaste líneas."); return; }
+      const form = new FormData();
+      form.append("lineas", lineas);
+      const resp = await fetch("/preview", {method:"POST", body:form});
+      const data = await resp.json();
+      if(!data.frases || data.frases.length===0){
+        alert("No hay frases válidas para generar el .docx. Revisa los errores.");
+        previewBox.style.display="block";
+        okBox.innerHTML = "";
+        errBox.innerHTML = (data.errores||[]).map(e=>`• ${e}`).join("<br>");
+        return;
+      }
+      const payload = { frases: data.frases, titulo: $("#titulo").value || "Redacción de Levantamiento Topográfico" };
+      const r = await fetch("/docx", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      if(!r.ok){ alert("No se pudo generar el .docx"); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "redaccion_topografica.docx";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function doCsv(){
+      const f = $("#csvFile").files[0];
+      if(!f){ alert("Selecciona un archivo CSV."); return; }
+      const form = new FormData();
+      form.append("file", f);
+      const r = await fetch("/upload_csv", {method:"POST", body: form});
+      if(!r.ok){
+        try { const data = await r.json(); alert(data.error || "Error al procesar CSV."); }
+        catch { alert("Error al procesar CSV."); }
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "redaccion_topografica_desde_csv.docx";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    $("#btnPreview").addEventListener("click", doPreview);
+    $("#btnDocx").addEventListener("click", doDocx);
+    $("#btnCsv").addEventListener("click", doCsv);
+  </script>
+</body>
+</html>
